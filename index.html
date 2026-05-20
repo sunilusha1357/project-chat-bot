@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini RAG Chatbot</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>Knowledge Base</h2>
+            </div>
+            <div class="sidebar-stats">
+                <div class="stat-item">
+                    <span class="stat-label">Documents</span>
+                    <span class="stat-value" id="doc-count">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Chunks</span>
+                    <span class="stat-value" id="chunk-count">0</span>
+                </div>
+            </div>
+            <div class="sidebar-sources" id="source-list">
+                <!-- Sources will be listed here -->
+            </div>
+            <div class="upload-section">
+                <form id="upload-form">
+                    <label for="file-upload" class="upload-btn">Upload Document</label>
+                    <input id="file-upload" type="file" accept=".pdf,.txt" style="display: none;">
+                </form>
+                <div id="upload-status" class="upload-status"></div>
+            </div>
+        </aside>
+
+        <!-- Main Chat Area -->
+        <main class="chat-main">
+            <header class="chat-header">
+                <h1 class="chat-title">Gemini RAG Chatbot</h1>
+                <button id="reset-btn" class="reset-btn">Reset Chat</button>
+            </header>
+
+            <div class="chat-container" id="chat-container">
+                <!-- Initial welcome message -->
+                <div class="message bot">
+                    <div class="message-bubble">
+                        Hello! I am ready to answer questions based on your documents. Ask me anything!
+                    </div>
+                </div>
+            </div>
+
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <textarea id="user-input" placeholder="Ask something about your documents..." rows="1"></textarea>
+                    <button id="send-btn" class="send-btn">
+                        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="css-i6dzq1"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const fileUpload = document.getElementById('file-upload');
+        const uploadStatus = document.getElementById('upload-status');
+
+        async function fetchStats() {
+            try {
+                const res = await fetch('/stats');
+                const data = await res.json();
+                if (res.ok) {
+                    document.getElementById('chunk-count').textContent = data.total_chunks;
+                    document.getElementById('doc-count').textContent = data.sources ? data.sources.length : 0;
+                    
+                    const sourceList = document.getElementById('source-list');
+                    sourceList.innerHTML = '';
+                    if (data.sources) {
+                        data.sources.forEach(src => {
+                            const el = document.createElement('div');
+                            el.className = 'source-item';
+                            el.textContent = src;
+                            sourceList.appendChild(el);
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to fetch stats", err);
+            }
+        }
+
+        window.addEventListener('load', fetchStats);
+
+        function appendMessage(text, isUser, sources = []) {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = `message ${isUser ? 'user' : 'bot'}`;
+            
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+            bubbleDiv.innerHTML = text.replace(/\n/g, '<br>');
+            
+            msgDiv.appendChild(bubbleDiv);
+            
+            if (!isUser && sources && sources.length > 0) {
+                const sourcesDiv = document.createElement('div');
+                sourcesDiv.className = 'message-sources';
+                sourcesDiv.textContent = `Sources: ${sources.join(', ')}`;
+                msgDiv.appendChild(sourcesDiv);
+            }
+            
+            chatContainer.appendChild(msgDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function showTyping() {
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'message bot typing-indicator';
+            msgDiv.id = 'typing-indicator';
+            
+            const bubbleDiv = document.createElement('div');
+            bubbleDiv.className = 'message-bubble';
+            bubbleDiv.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+            
+            msgDiv.appendChild(bubbleDiv);
+            chatContainer.appendChild(msgDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function removeTyping() {
+            const typing = document.getElementById('typing-indicator');
+            if (typing) typing.remove();
+        }
+
+        async function sendMessage() {
+            const text = userInput.value.trim();
+            if (!text) return;
+            
+            appendMessage(text, true);
+            userInput.value = '';
+            userInput.style.height = 'auto';
+            sendBtn.disabled = true;
+            
+            showTyping();
+            
+            try {
+                const res = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+                const data = await res.json();
+                
+                removeTyping();
+                
+                if (res.ok) {
+                    appendMessage(data.answer, false, data.sources);
+                } else {
+                    appendMessage(`Error: ${data.error || 'Something went wrong.'}`, false);
+                }
+            } catch (err) {
+                removeTyping();
+                appendMessage(`Connection error.`, false);
+            } finally {
+                sendBtn.disabled = false;
+                userInput.focus();
+            }
+        }
+
+        sendBtn.addEventListener('click', sendMessage);
+
+        userInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        userInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = (this.scrollHeight < 150 ? this.scrollHeight : 150) + 'px';
+        });
+
+        resetBtn.addEventListener('click', async () => {
+            const res = await fetch('/reset', { method: 'POST' });
+            if (res.ok) {
+                chatContainer.innerHTML = '';
+                appendMessage("Chat history cleared. How can I help you now?", false);
+            }
+        });
+
+        fileUpload.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            
+            uploadStatus.textContent = `Uploading ${file.name}...`;
+            uploadStatus.className = 'upload-status info';
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const res = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await res.json();
+                
+                if (res.ok) {
+                    uploadStatus.textContent = data.message;
+                    uploadStatus.className = 'upload-status success';
+                    fetchStats();
+                } else {
+                    uploadStatus.textContent = data.error || "Upload failed.";
+                    uploadStatus.className = 'upload-status error';
+                }
+            } catch (err) {
+                uploadStatus.textContent = 'Upload failed.';
+                uploadStatus.className = 'upload-status error';
+            }
+            
+            e.target.value = '';
+        });
+    </script>
+</body>
+</html>
